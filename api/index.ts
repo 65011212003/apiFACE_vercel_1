@@ -1,8 +1,19 @@
 import express, { Request, Response } from 'express';
-import mysql from 'mysql';
+import mysql, { Query } from 'mysql';
 import bcrypt from 'bcrypt';
+import cors from 'cors';
+import multer, { Multer } from "multer";
+import path from 'path';
+import { initializeApp } from "firebase/app";
+import { getStorage, ref, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
 
 const app = express();
+
+app.use(
+    cors({
+        origin: "*",
+    })
+);
 
 // Create a MySQL connection pool
 const db = mysql.createPool({
@@ -49,21 +60,36 @@ app.get('/users/:id', (req: Request, res: Response) => {
 });
 
 app.post('/register', async (req: Request, res: Response) => {
-    const { username, password, avatarURL } = req.body;
+    const { display_name, username, password, avatarURL } = req.body;
 
-    // Hash the password
-    const hashedPassword = await bcrypt.hash(password, 10);
+    // Check if the username already exists
+    const checkUsernameQuery = 'SELECT * FROM Users WHERE Username = ?';
 
-    // Insert the user into the database
-    const query = 'INSERT INTO Users (Username, Password, AvatarURL) VALUES (?, ?, ?)';
-
-    db.query(query, [username, hashedPassword, avatarURL], (err, results) => {
-        if (err) {
-            console.error(err);
+    db.query(checkUsernameQuery, [username], async (checkErr, checkResults) => {
+        if (checkErr) {
+            console.error(checkErr);
             return res.status(500).json({ error: 'Internal Server Error' });
         }
 
-        res.json({ userId: results.insertId, message: 'User created successfully' });
+        // If the username already exists, return an error
+        if (checkResults.length > 0) {
+            return res.status(400).json({ error: 'Username already exists' });
+        }
+
+        // Hash the password
+        const hashedPassword = await bcrypt.hash(password, 10);
+
+        // Insert the user into the database
+        const insertUserQuery = 'INSERT INTO Users (display_name , Username, Password, AvatarURL) VALUES (?, ?, ?, ?)';
+
+        db.query(insertUserQuery, [display_name, username, hashedPassword, avatarURL], (insertErr, results) => {
+            if (insertErr) {
+                console.error(insertErr);
+                return res.status(500).json({ error: 'Internal Server Error' });
+            }
+
+            res.json({ userId: results.insertId, message: 'User created successfully' });
+        });
     });
 });
 
@@ -109,10 +135,36 @@ app.post('/login', (req: Request, res: Response) => {
     });
 });
 
-app.get('/randomImages', (req: Request, res: Response) => {
-    const query = 'SELECT * FROM Images ORDER BY RAND() LIMIT 2';
+// app.get('/randomImages', (req: Request, res: Response) => {
+//     const query = 'SELECT * FROM Images WHERE EloScore BETWEEN (1500 - 300) AND (1500 + 300) ORDER BY RAND() LIMIT 2';
 
-    db.query(query, (err, results) => {
+//     db.query(query, (err, results) => {
+//         if (err) {
+//             console.error(err);
+//             return res.status(500).json({ error: 'Internal Server Error' });
+//         }
+
+//         res.json(results);
+//     });
+// });
+
+app.get('/randomImages', (req: Request, res: Response) => {
+    const eloRange = 300;
+
+    const query = `
+      SELECT I.*, U.display_name
+      FROM Images I
+      JOIN Users U ON I.UserID = U.UserID
+      WHERE I.EloScore BETWEEN ? AND ?
+        AND U.UserID != I.UserID
+      ORDER BY RAND()
+      LIMIT 2
+    `;
+
+    const eloMin = 1500 - eloRange;
+    const eloMax = 1500 + eloRange;
+
+    db.query(query, [eloMin, eloMax], (err, results) => {
         if (err) {
             console.error(err);
             return res.status(500).json({ error: 'Internal Server Error' });
@@ -121,6 +173,7 @@ app.get('/randomImages', (req: Request, res: Response) => {
         res.json(results);
     });
 });
+
 
 
 interface Image {
@@ -287,8 +340,14 @@ app.delete('/users/:id', (req, res) => {
 
 
 app.get('/top-rated', (req, res) => {
-    // Construct the SQL query to get the top 10 rated users
-    const topRatedQuery = 'SELECT * FROM Images ORDER BY EloScore DESC LIMIT 10';
+    // Construct the SQL query to get the top 10 rated users with display names
+    const topRatedQuery = `
+        SELECT Images.*, Users.display_name
+        FROM Images
+        JOIN Users ON Images.UserID = Users.UserID
+        ORDER BY Images.EloScore DESC
+        LIMIT 10
+    `;
 
     // Execute the query
     db.query(topRatedQuery, (err, results) => {
@@ -300,6 +359,7 @@ app.get('/top-rated', (req, res) => {
         res.json(results);
     });
 });
+
 
 app.put('/change-image/:userId', async (req: Request, res: Response) => {
     const userId = req.params.userId;
@@ -331,9 +391,9 @@ app.put('/change-image/:userId', async (req: Request, res: Response) => {
 });
 
 
-app.get('/view-image', (req: Request, res: Response) => {
+app.get('/view-image/:userId', (req: Request, res: Response) => {
     // Assuming you have user authentication in place, and you get the user ID from the authenticated user.
-    const userId = req.query.userId; // Replace with your actual method to get the user ID.
+    const userId = req.params.userId;
 
     // Get the user's image list
     const getUserImagesQuery = `SELECT * FROM Images WHERE UserID = ? ORDER BY EloScore DESC`;
@@ -343,26 +403,193 @@ app.get('/view-image', (req: Request, res: Response) => {
         }
 
         // Get the user's daily statistics
-        const getDailyStatsQuery = `SELECT * FROM DailyStatistics WHERE UserID = ? ORDER BY Date DESC LIMIT 2`;
-        db.query(getDailyStatsQuery, [userId], (getDailyStatsErr, dailyStats) => {
-            if (getDailyStatsErr) {
-                return res.status(500).json({ error: 'Internal Server Error' });
-            }
+        // const getDailyStatsQuery = `SELECT * FROM DailyStatistics WHERE UserID = ? ORDER BY Date DESC LIMIT 2`;
+        // db.query(getDailyStatsQuery, [userId], (getDailyStatsErr, dailyStats) => {
+        //     if (getDailyStatsErr) {
+        //         return res.status(500).json({ error: 'Internal Server Error' });
+        //     }
 
-            // Calculate ranking changes
-            const todayWins = dailyStats[0]?.Wins || 0;
-            const yesterdayWins = dailyStats[1]?.Wins || 0;
-            const rankingChange = todayWins - yesterdayWins;
+        // Calculate ranking changes
+        // const todayWins = dailyStats[0]?.Wins || 0;
+        // const yesterdayWins = dailyStats[1]?.Wins || 0;
+        // const rankingChange = todayWins - yesterdayWins;
 
-            // Send the response with user images and ranking changes
-            res.json({ userImages, rankingChange });
-        });
+        // Send the response with user images and ranking changes
+        // res.json({ userImages, rankingChange });
+        res.json({ userImages });
     });
 });
 
 
 
-// Start the server
+
+
+const firebaseConfig = {
+    apiKey: "AIzaSyDHM3guYBRRloid5lGpcmVe5ldCvBRh3uE",
+    authDomain: "tripbookingbyjoe.firebaseapp.com",
+    projectId: "tripbookingbyjoe",
+    storageBucket: "tripbookingbyjoe.appspot.com",
+    messagingSenderId: "52023133809",
+    appId: "1:52023133809:web:797a8df9184a180419bdd0",
+    measurementId: "G-H1JMHRNKPD"
+};
+
+// Initialize Firebase
+initializeApp(firebaseConfig);
+
+const storage = getStorage();
+
+class FileMiddleware {
+    // Attribute file name
+    filename = "";
+
+    // Create object of diskloader for saving file
+    public readonly diskLoader = multer({
+        // Storage = define folder (disk) to be saved 🙂
+        storage: multer.memoryStorage(),
+        limits: {
+            fileSize: 67108864, // 64 MByte
+        },
+    });
+
+}
+
+
+const fileUpload = new FileMiddleware();
+
+app.post("/upload", fileUpload.diskLoader.single("123"), async (req, res) => {
+    try {
+        const filename = Date.now() + "-" + Math.round(Math.random() * 10000) + ".png";
+        const storageRef = ref(storage, "/images/" + filename);
+        const metadata = {
+            contentType: req.file!.mimetype
+        };
+
+        const uploadTask = await uploadBytesResumable(storageRef, req.file!.buffer, metadata);
+        const url = await getDownloadURL(uploadTask.ref);
+
+
+        const insertQuery = 'INSERT INTO Images (UserID, ImageURL) VALUES (?, ?)';
+        const ID = 1;
+
+        db.query(insertQuery, [ID, url], (err, result) => {
+            if (err) {
+                console.error('Error inserting into Images table:', err);
+                res.status(500).json({ error: 'Internal server error' });
+            } else {
+                res.status(200).json({
+                    file: url,
+                });
+            }
+        });
+    } catch (error) {
+        console.error("Error uploading file:", error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+
+
+app.delete('/deleteImage/:imageId', async (req: Request, res: Response) => {
+    const imageId = req.params.imageId;
+
+    // Check if the image exists in the database
+    const checkImageQuery = 'SELECT * FROM Images WHERE ImageID = ?';
+
+    db.query(checkImageQuery, [imageId], async (checkErr, checkResults) => {
+        if (checkErr) {
+            console.error(checkErr);
+            return res.status(500).json({ error: 'Internal Server Error' });
+        }
+
+        // If the image doesn't exist, return an error
+        if (checkResults.length === 0) {
+            return res.status(404).json({ error: 'Image not found' });
+        }
+
+        // Get the image URL from the database
+        const imageUrl = checkResults[0].ImageURL;
+
+        try {
+            // Delete the image from Firebase Storage
+            const storageRef = ref(storage, imageUrl);
+            await deleteObject(storageRef);
+
+            // Delete the image from the database
+            const deleteQuery = 'DELETE FROM Images WHERE ImageID = ?';
+            db.query(deleteQuery, [imageId], (deleteErr, result) => {
+                if (deleteErr) {
+                    console.error(deleteErr);
+                    return res.status(500).json({ error: 'Internal Server Error' });
+                }
+
+                res.json({ message: 'Image deleted successfully' });
+            });
+        } catch (error) {
+            console.error('Error deleting image:', error);
+            res.status(500).json({ error: 'Internal Server Error' });
+        }
+    });
+});
+
+
+app.put('/updateImage/:imageId', fileUpload.diskLoader.single('123'), async (req, res) => {
+    try {
+        const imageId = req.params.imageId;
+
+        // Check if the image exists in the database
+        const checkImageQuery = 'SELECT * FROM Images WHERE ImageID = ?';
+
+        db.query(checkImageQuery, [imageId], async (checkErr, checkResults) => {
+            if (checkErr) {
+                console.error(checkErr);
+                return res.status(500).json({ error: 'Internal Server Error' });
+            }
+
+            // If the image doesn't exist, return an error
+            if (checkResults.length === 0) {
+                return res.status(404).json({ error: 'Image not found' });
+            }
+
+            // Get the current image URL from the database
+            const currentImageUrl = checkResults[0].ImageURL;
+
+            // Delete the current image from Firebase Storage
+            const currentStorageRef = ref(storage, currentImageUrl);
+            await deleteObject(currentStorageRef);
+
+            // Upload the updated image to Firebase Storage
+            const updatedFilename = Date.now() + '-' + Math.round(Math.random() * 10000) + '.png';
+            const updatedStorageRef = ref(storage, '/images/' + updatedFilename);
+            const metadata = {
+                contentType: req.file!.mimetype
+            };
+
+            const uploadTask = await uploadBytesResumable(updatedStorageRef, req.file!.buffer, metadata);
+            const updatedImageUrl = await getDownloadURL(uploadTask.ref);
+
+            // Update the image URL in the database
+            const updateQuery = 'UPDATE Images SET ImageURL = ? WHERE ImageID = ?';
+            db.query(updateQuery, [updatedImageUrl, imageId], (updateErr, result) => {
+                if (updateErr) {
+                    console.error(updateErr);
+                    return res.status(500).json({ error: 'Internal Server Error' });
+                }
+
+                res.status(200).json({
+                    message: 'Image updated successfully',
+                    file: updatedImageUrl,
+                });
+            });
+        });
+    } catch (error) {
+        console.error('Error updating image:', error);
+        res.status(500).json({ error: 'Internal Server Error' });
+    }
+});
+
+
+
 app.listen(3000, () => console.log('Server ready on port 3000.'));
 
 export default app;
