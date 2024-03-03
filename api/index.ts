@@ -60,7 +60,7 @@ app.get('/users/:id', (req: Request, res: Response) => {
 });
 
 app.post('/register', async (req: Request, res: Response) => {
-    const { display_name, username, password, avatarURL } = req.body;
+    const { display_name, username, password } = req.body;
 
     // Check if the username already exists
     const checkUsernameQuery = 'SELECT * FROM Users WHERE Username = ?';
@@ -80,9 +80,9 @@ app.post('/register', async (req: Request, res: Response) => {
         const hashedPassword = await bcrypt.hash(password, 10);
 
         // Insert the user into the database
-        const insertUserQuery = 'INSERT INTO Users (display_name , Username, Password, AvatarURL) VALUES (?, ?, ?, ?)';
+        const insertUserQuery = 'INSERT INTO Users (display_name , Username, Password) VALUES (?, ?, ?)';
 
-        db.query(insertUserQuery, [display_name, username, hashedPassword, avatarURL], (insertErr, results) => {
+        db.query(insertUserQuery, [display_name, username, hashedPassword], (insertErr, results) => {
             if (insertErr) {
                 console.error(insertErr);
                 return res.status(500).json({ error: 'Internal Server Error' });
@@ -135,18 +135,17 @@ app.post('/login', (req: Request, res: Response) => {
     });
 });
 
-app.get('/randomImages', (req: Request, res: Response) => {
-    const query = 'SELECT * FROM Images WHERE EloScore BETWEEN (1500 - 300) AND (1500 + 300) ORDER BY RAND() LIMIT 2';
+//     const query = 'SELECT * FROM Images WHERE EloScore BETWEEN (1500 - 300) AND (1500 + 300) ORDER BY RAND() LIMIT 2';
 
-    db.query(query, (err, results) => {
-        if (err) {
-            console.error(err);
-            return res.status(500).json({ error: 'Internal Server Error' });
-        }
+//     db.query(query, (err, results) => {
+//         if (err) {
+//             console.error(err);
+//             return res.status(500).json({ error: 'Internal Server Error' });
+//         }
 
-        res.json(results);
-    });
-});
+//         res.json(results);
+//     });
+// });
 
 
 //     const eloRange = 300;
@@ -174,6 +173,33 @@ app.get('/randomImages', (req: Request, res: Response) => {
 //     });
 // });
 
+app.get('/randomImages', (req: Request, res: Response) => {
+
+    const subquery = `
+        SELECT MAX(ImageID) AS ImageID
+        FROM Images
+        WHERE EloScore BETWEEN (1500 - 300) AND (1500 + 300)
+        GROUP BY UserID
+        ORDER BY RAND()
+        LIMIT 2
+    `;
+
+    const query = `
+        SELECT i.*
+        FROM Images i
+        JOIN (${subquery}) sub ON i.ImageID = sub.ImageID
+        WHERE i.EloScore BETWEEN (1500 - 300) AND (1500 + 300)
+    `;
+
+    db.query(query, (err, results) => {
+        if (err) {
+            console.error(err);
+            return res.status(500).json({ error: 'Internal Server Error' });
+        }
+
+        res.json(results);
+    });
+});
 
 
 interface Image {
@@ -470,7 +496,7 @@ app.post("/upload", fileUpload.diskLoader.single("123"), async (req, res) => {
 
 
         const insertQuery = 'INSERT INTO Images (UserID, ImageURL) VALUES (?, ?)';
-        const ID = 1;
+        const ID = req.body.id;
 
         db.query(insertQuery, [ID, url], (err, result) => {
             if (err) {
@@ -587,6 +613,39 @@ app.put('/updateImage/:imageId', fileUpload.diskLoader.single('123'), async (req
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
+
+// Endpoint for uploading avatar
+app.post('/uploadAvatar', fileUpload.diskLoader.single('123'), async (req, res) => {
+    try {
+        const userId = req.body.userId; // Assuming you pass the user ID in the request body
+        const filename = Date.now() + '-' + Math.round(Math.random() * 10000) + '.png';
+        const storageRef = ref(storage, '/avatars/' + filename);
+        const metadata = {
+            contentType: req.file!.mimetype,
+        };
+
+        const uploadTask = await uploadBytesResumable(storageRef, req.file!.buffer, metadata);
+        const avatarURL = await getDownloadURL(uploadTask.ref);
+
+        // Update the avatar URL in the database
+        const updateQuery = 'UPDATE Users SET AvatarURL = ? WHERE UserID = ?';
+        db.query(updateQuery, [avatarURL, userId], (updateErr, result) => {
+            if (updateErr) {
+                console.error(updateErr);
+                return res.status(500).json({ error: 'Internal Server Error' });
+            }
+
+            res.status(200).json({
+                message: 'Avatar uploaded and URL updated successfully',
+                avatarURL,
+            });
+        });
+    } catch (error) {
+        console.error('Error uploading avatar:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
 
 
 
