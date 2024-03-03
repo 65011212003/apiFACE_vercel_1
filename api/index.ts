@@ -135,36 +135,10 @@ app.post('/login', (req: Request, res: Response) => {
     });
 });
 
-// app.get('/randomImages', (req: Request, res: Response) => {
-//     const query = 'SELECT * FROM Images WHERE EloScore BETWEEN (1500 - 300) AND (1500 + 300) ORDER BY RAND() LIMIT 2';
-
-//     db.query(query, (err, results) => {
-//         if (err) {
-//             console.error(err);
-//             return res.status(500).json({ error: 'Internal Server Error' });
-//         }
-
-//         res.json(results);
-//     });
-// });
-
 app.get('/randomImages', (req: Request, res: Response) => {
-    const eloRange = 300;
+    const query = 'SELECT * FROM Images WHERE EloScore BETWEEN (1500 - 300) AND (1500 + 300) ORDER BY RAND() LIMIT 2';
 
-    const query = `
-      SELECT I.*, U.display_name
-      FROM Images I
-      JOIN Users U ON I.UserID = U.UserID
-      WHERE I.EloScore BETWEEN ? AND ?
-        AND U.UserID != I.UserID
-      ORDER BY RAND()
-      LIMIT 2
-    `;
-
-    const eloMin = 1500 - eloRange;
-    const eloMax = 1500 + eloRange;
-
-    db.query(query, [eloMin, eloMax], (err, results) => {
+    db.query(query, (err, results) => {
         if (err) {
             console.error(err);
             return res.status(500).json({ error: 'Internal Server Error' });
@@ -173,6 +147,32 @@ app.get('/randomImages', (req: Request, res: Response) => {
         res.json(results);
     });
 });
+
+
+//     const eloRange = 300;
+
+//     const query = `
+//       SELECT I.*, U.display_name
+//       FROM Images I
+//       JOIN Users U ON I.UserID = U.UserID
+//       WHERE I.EloScore BETWEEN ? AND ?
+//         AND U.UserID != I.UserID
+//       ORDER BY RAND()
+//       LIMIT 2
+//     `;
+
+//     const eloMin = 1500 - eloRange;
+//     const eloMax = 1500 + eloRange;
+
+//     db.query(query, [eloMin, eloMax], (err, results) => {
+//         if (err) {
+//             console.error(err);
+//             return res.status(500).json({ error: 'Internal Server Error' });
+//         }
+
+//         res.json(results);
+//     });
+// });
 
 
 
