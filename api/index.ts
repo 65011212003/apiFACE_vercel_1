@@ -1,11 +1,13 @@
 import express, { Request, Response } from 'express';
-import mysql, { Query } from 'mysql';
+import mysql, { Query, Pool } from 'mysql';
 import bcrypt from 'bcrypt';
 import cors from 'cors';
 import multer, { Multer } from "multer";
 import path from 'path';
 import { initializeApp } from "firebase/app";
 import { getStorage, ref, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
+import { promisify } from 'util';
+const bodyParser = require('body-parser');
 
 const app = express();
 
@@ -14,6 +16,8 @@ app.use(
         origin: "*",
     })
 );
+
+
 
 // Create a MySQL connection pool
 const db = mysql.createPool({
@@ -210,90 +214,198 @@ interface Image {
 
 
 // Endpoint to record a vote with Elo rating update
-app.post('/vote', (req: Request, res: Response) => {
-    const { voterID, winImageID, loseImageID } = req.body;
+// app.post('/vote', (req: Request, res: Response) => {
+//     const { voterID, winImageID, loseImageID } = req.body;
 
-    // Check if all required parameters are provided
-    if (!voterID || !winImageID || !loseImageID) {
-        return res.status(400).json({ error: 'Voter ID, Win Image ID, and Lose Image ID are required' });
+//     // Check if all required parameters are provided
+//     if (!voterID || !winImageID || !loseImageID) {
+//         return res.status(400).json({ error: 'Voter ID, Win Image ID, and Lose Image ID are required' });
+//     }
+
+//     // Check if the voter exists
+//     const userQuery = 'SELECT * FROM Users WHERE UserID = ?';
+
+//     db.query(userQuery, [voterID], (userErr, userResults) => {
+//         if (userErr) {
+//             console.error(userErr);
+//             return res.status(500).json({ error: 'Internal Server Error user' });
+//         }
+
+//         if (userResults.length === 0) {
+//             return res.status(404).json({ error: 'Voter not found' });
+//         }
+
+//         // Check if the win image and lose image exist
+//         const imageQuery = 'SELECT * FROM Images WHERE ImageID IN (?, ?)';
+
+//         db.query(imageQuery, [winImageID, loseImageID], (imageErr, imageResults) => {
+//             if (imageErr) {
+//                 console.error(imageErr);
+//                 return res.status(500).json({ error: 'Internal Server Error images' });
+//             }
+
+//             if (imageResults.length < 2) {
+//                 return res.status(404).json({ error: 'One or more images not found' });
+//             }
+
+//             const winImage: Image | undefined = imageResults.find((image: Image) => image.ImageID === winImageID);
+//             const loseImage: Image | undefined = imageResults.find((image: Image) => image.ImageID === loseImageID);
+
+//             // Check if winImage and loseImage are defined
+//             if (!winImage || !loseImage) {
+//                 return res.status(404).json({ error: 'One or more images not found' });
+//             }
+
+//             // Update Elo scores using the Elo rating algorithm
+//             const eloK = 32; // Adjust this value based on your preferences
+//             const expectedWinProbability = 1 / (1 + 10 ** ((loseImage.EloScore - winImage.EloScore) / 400));
+
+//             winImage.EloScore += eloK * (1 - expectedWinProbability);
+//             loseImage.EloScore += eloK * (0 - (1 - expectedWinProbability));
+
+//             // Update Elo scores in the database
+//             const updateQuery = 'UPDATE Images SET EloScore = ? WHERE ImageID = ?';
+
+//             db.query(updateQuery, [winImage.EloScore, winImageID], (updateErr1) => {
+//                 if (updateErr1) {
+//                     console.error(updateErr1);
+//                     return res.status(500).json({ error: `Internal Server Error update ELOSCORE WIN: ${updateErr1.message}` });
+//                 }
+
+//                 db.query(updateQuery, [loseImage.EloScore, loseImageID], (updateErr2) => {
+//                     if (updateErr2) {
+//                         console.error(updateErr2);
+//                         return res.status(500).json({ error: `Internal Server Error update ELOSCORE LOSE: ${updateErr2.message}` });
+//                     }
+
+//                     // Insert the vote into the database
+//                     const voteQuery = 'INSERT INTO Votes (VoterID, WinImageID, LoseImageID) VALUES (?, ?, ?)';
+
+//                     db.query(voteQuery, [voterID, winImageID, loseImageID], (voteErr) => {
+//                         if (voteErr) {
+//                             console.error(voteErr);
+//                             return res.status(500).json({ error: `Internal Server Error insert Votes: ${voteErr.message}` });
+//                         }
+
+//                         res.json({ message: 'Vote recorded successfully' });
+//                     });
+//                 });
+//             });
+//         });
+//     });
+// });
+
+
+const cooldownMap = new Map();
+
+
+app.post('/vote', (req, res) => {
+    const { VoterID, WinImageID, LoseImageID } = req.body;
+
+    // Check if cooldown is active for the given ImageID
+    if (cooldownMap.has(WinImageID) && Date.now() - cooldownMap.get(WinImageID) < 5000) {
+        res.status(403).send('Cooldown active. Cannot vote for the same ImageID within 5 seconds.');
+        return;
     }
 
-    // Check if the voter exists
-    const userQuery = 'SELECT * FROM Users WHERE UserID = ?';
+    // Insert the vote into the Votes table
+    const voteQuery = `INSERT INTO Votes (VoterID, WinImageID, LoseImageID) VALUES (?, ?, ?)`;
+    db.query(voteQuery, [VoterID, WinImageID, LoseImageID], (voteError, voteResults) => {
+        if (voteError) {
+            console.error(voteError);
+            res.status(500).send('Internal Server Error');
+        } else {
+            // Set the cooldown timestamp for the given ImageID
+            cooldownMap.set(WinImageID, Date.now());
 
-    db.query(userQuery, [voterID], (userErr, userResults) => {
-        if (userErr) {
-            console.error(userErr);
-            return res.status(500).json({ error: 'Internal Server Error user' });
+            // Calculate new Elo scores
+            calculateElo(WinImageID, LoseImageID);
+            res.status(200).send('Vote successfully recorded');
         }
-
-        if (userResults.length === 0) {
-            return res.status(404).json({ error: 'Voter not found' });
-        }
-
-        // Check if the win image and lose image exist
-        const imageQuery = 'SELECT * FROM Images WHERE ImageID IN (?, ?)';
-
-        db.query(imageQuery, [winImageID, loseImageID], (imageErr, imageResults) => {
-            if (imageErr) {
-                console.error(imageErr);
-                return res.status(500).json({ error: 'Internal Server Error images' });
-            }
-
-            if (imageResults.length < 2) {
-                return res.status(404).json({ error: 'One or more images not found' });
-            }
-
-            const winImage: Image | undefined = imageResults.find((image: Image) => image.ImageID === winImageID);
-            const loseImage: Image | undefined = imageResults.find((image: Image) => image.ImageID === loseImageID);
-
-            // Check if winImage and loseImage are defined
-            if (!winImage || !loseImage) {
-                return res.status(404).json({ error: 'One or more images not found' });
-            }
-
-            // Update Elo scores using the Elo rating algorithm
-            const eloK = 32; // Adjust this value based on your preferences
-            const expectedWinProbability = 1 / (1 + 10 ** ((loseImage.EloScore - winImage.EloScore) / 400));
-
-            winImage.EloScore += eloK * (1 - expectedWinProbability);
-            loseImage.EloScore += eloK * (0 - (1 - expectedWinProbability));
-
-            // Update Elo scores in the database
-            const updateQuery = 'UPDATE Images SET EloScore = ? WHERE ImageID = ?';
-
-            db.query(updateQuery, [winImage.EloScore, winImageID], (updateErr1) => {
-                if (updateErr1) {
-                    console.error(updateErr1);
-                    return res.status(500).json({ error: `Internal Server Error update ELOSCORE WIN: ${updateErr1.message}` });
-                }
-
-                db.query(updateQuery, [loseImage.EloScore, loseImageID], (updateErr2) => {
-                    if (updateErr2) {
-                        console.error(updateErr2);
-                        return res.status(500).json({ error: `Internal Server Error update ELOSCORE LOSE: ${updateErr2.message}` });
-                    }
-
-                    // Insert the vote into the database
-                    const voteQuery = 'INSERT INTO Votes (VoterID, WinImageID, LoseImageID) VALUES (?, ?, ?)';
-
-                    db.query(voteQuery, [voterID, winImageID, loseImageID], (voteErr) => {
-                        if (voteErr) {
-                            console.error(voteErr);
-                            return res.status(500).json({ error: `Internal Server Error insert Votes: ${voteErr.message}` });
-                        }
-
-                        res.json({ message: 'Vote recorded successfully' });
-                    });
-                });
-            });
-        });
     });
 });
+
+function calculateElo(winnerImageID: number, loserImageID: number): void {
+    const kFactor = 32; // Adjust the k-factor based on your requirements
+
+    // Retrieve current Elo scores
+    const getScoresQuery = 'SELECT EloScore FROM Images WHERE ImageID IN (?, ?)';
+    db.query(getScoresQuery, [winnerImageID, loserImageID], (error, results: { ImageID: number, EloScore: number }[]) => {
+        if (error) {
+            console.error(error);
+        } else if (results.length === 2) {
+            const winnerElo = results.find((result) => result.ImageID === winnerImageID)?.EloScore || 1500;
+            const loserElo = results.find((result) => result.ImageID === loserImageID)?.EloScore || 1500;
+
+            // Calculate expected outcomes
+            const expectedWinner = 1 / (1 + 10 ** ((loserElo - winnerElo) / 400));
+            const expectedLoser = 1 / (1 + 10 ** ((winnerElo - loserElo) / 400));
+
+            // Update Elo scores
+            const newWinnerElo = winnerElo + kFactor * (1 - expectedWinner);
+            const newLoserElo = loserElo + kFactor * (0 - expectedLoser);
+
+            // Update Elo scores in the Images table
+            const updateScoresQuery = 'UPDATE Images SET EloScore = ? WHERE ImageID = ?';
+            db.query(updateScoresQuery, [newWinnerElo, winnerImageID], (updateError) => {
+                if (updateError) {
+                    console.error(updateError);
+                }
+            });
+
+            db.query(updateScoresQuery, [newLoserElo, loserImageID], (updateError) => {
+                if (updateError) {
+                    console.error(updateError);
+                }
+            });
+        }
+    });
+}
+
+
+// function calculateElo(winnerImageID, loserImageID) {
+//     const kFactor = 32; // Adjust the k-factor based on your requirements
+
+//     // Retrieve current Elo scores
+//     const getScoresQuery = 'SELECT EloScore FROM Images WHERE ImageID IN (?, ?)';
+//     db.query(getScoresQuery, [winnerImageID, loserImageID], (error, results) => {
+//         if (error) {
+//             console.error(error);
+//         } else if (results.length === 2) {
+//             const winnerElo = results.find((result) => result.ImageID === winnerImageID).EloScore;
+//             const loserElo = results.find((result) => result.ImageID === loserImageID).EloScore;
+
+//             // Calculate expected outcomes
+//             const expectedWinner = 1 / (1 + 10 ** ((loserElo - winnerElo) / 400));
+//             const expectedLoser = 1 / (1 + 10 ** ((winnerElo - loserElo) / 400));
+
+//             // Update Elo scores
+//             const newWinnerElo = winnerElo + kFactor * (1 - expectedWinner);
+//             const newLoserElo = loserElo + kFactor * (0 - expectedLoser);
+
+//             // Update Elo scores in the Images table
+//             const updateScoresQuery = 'UPDATE Images SET EloScore = ? WHERE ImageID = ?';
+//             db.query(updateScoresQuery, [newWinnerElo, winnerImageID], (updateError) => {
+//                 if (updateError) {
+//                     console.error(updateError);
+//                 }
+//             });
+
+//             db.query(updateScoresQuery, [newLoserElo, loserImageID], (updateError) => {
+//                 if (updateError) {
+//                     console.error(updateError);
+//                 }
+//             });
+//         }
+//     });
+// }
+
+
 
 
 
 // Update user information endpoint
+
 app.put('/users/:id', (req, res) => {
     const userId = parseInt(req.params.id);
     const { Username, Password, AvatarURL } = req.body;
@@ -595,7 +707,7 @@ app.put('/updateImage/:imageId', fileUpload.diskLoader.single('123'), async (req
             const updatedImageUrl = await getDownloadURL(uploadTask.ref);
 
             // Update the image URL in the database
-            const updateQuery = 'UPDATE Images SET ImageURL = ? WHERE ImageID = ?';
+            const updateQuery = 'UPDATE Images SET ImageURL = ? , EloScore = 1500 WHERE ImageID = ?';
             db.query(updateQuery, [updatedImageUrl, imageId], (updateErr, result) => {
                 if (updateErr) {
                     console.error(updateErr);
