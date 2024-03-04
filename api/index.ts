@@ -1,5 +1,5 @@
 import express, { Request, Response } from 'express';
-import mysql, { Query, Pool } from 'mysql';
+import mysql, { Connection } from 'mysql';
 import bcrypt from 'bcrypt';
 import cors from 'cors';
 import multer, { Multer } from "multer";
@@ -7,7 +7,6 @@ import path from 'path';
 import { initializeApp } from "firebase/app";
 import { getStorage, ref, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
 import { promisify } from 'util';
-const bodyParser = require('body-parser');
 
 const app = express();
 
@@ -296,71 +295,232 @@ interface Image {
 // });
 
 
-const cooldownMap = new Map();
+// const cooldownMap = new Map();
 
+
+// app.post('/vote', (req, res) => {
+//     const { VoterID, WinImageID, LoseImageID } = req.body;
+
+//     // Check if cooldown is active for the given ImageID
+//     if (cooldownMap.has(WinImageID) && Date.now() - cooldownMap.get(WinImageID) < 5000) {
+//         res.status(403).send('Cooldown active. Cannot vote for the same ImageID within 5 seconds.');
+//         return;
+//     }
+
+//     // Insert the vote into the Votes table
+//     const voteQuery = `INSERT INTO Votes (VoterID, WinImageID, LoseImageID) VALUES (?, ?, ?)`;
+//     db.query(voteQuery, [VoterID, WinImageID, LoseImageID], (voteError, voteResults) => {
+//         if (voteError) {
+//             console.error(voteError);
+//             res.status(500).send('Internal Server Error');
+//         } else {
+//             // Set the cooldown timestamp for the given ImageID
+//             cooldownMap.set(WinImageID, Date.now());
+
+//             // Calculate new Elo scores
+//             calculateElo(WinImageID, LoseImageID);
+//             res.status(200).send('Vote successfully recorded');
+//         }
+//     });
+// });
+
+// function calculateElo(winnerImageID: number, loserImageID: number): void {
+//     const kFactor = 32; // Adjust the k-factor based on your requirements
+
+//     // Retrieve current Elo scores
+//     const getScoresQuery = 'SELECT EloScore FROM Images WHERE ImageID IN (?, ?)';
+//     db.query(getScoresQuery, [winnerImageID, loserImageID], (error, results: { ImageID: number, EloScore: number }[]) => {
+//         if (error) {
+//             console.error(error);
+//         } else if (results.length === 2) {
+//             const winnerElo = results.find((result) => result.ImageID === winnerImageID)?.EloScore || 1500;
+//             const loserElo = results.find((result) => result.ImageID === loserImageID)?.EloScore || 1500;
+
+//             // Calculate expected outcomes
+//             const expectedWinner = 1 / (1 + 10 ** ((loserElo - winnerElo) / 400));
+//             const expectedLoser = 1 / (1 + 10 ** ((winnerElo - loserElo) / 400));
+
+//             // Update Elo scores
+//             const newWinnerElo = winnerElo + kFactor * (1 - expectedWinner);
+//             const newLoserElo = loserElo + kFactor * (0 - expectedLoser);
+
+//             // Update Elo scores in the Images table
+//             const updateScoresQuery = 'UPDATE Images SET EloScore = ? WHERE ImageID = ?';
+//             db.query(updateScoresQuery, [newWinnerElo, winnerImageID], (updateError) => {
+//                 if (updateError) {
+//                     console.error(updateError);
+//                 }
+//             });
+
+//             db.query(updateScoresQuery, [newLoserElo, loserImageID], (updateError) => {
+//                 if (updateError) {
+//                     console.error(updateError);
+//                 }
+//             });
+//         }
+//     });
+// }
+
+// const cooldownMap = new Map<number, number>();
+
+// app.post('/vote', (req, res) => {
+//     const { VoterID, WinImageID, LoseImageID } = req.body;
+
+//     // Check if cooldown is active for the given ImageID
+//     if (cooldownMap.has(WinImageID) && Date.now() - cooldownMap.get(WinImageID)! < 5000) {
+//         res.status(403).send('Cooldown active. Cannot vote for the same ImageID within 5 seconds.');
+//         return;
+//     }
+
+//     // Acquire a connection from the pool
+//     db.getConnection((getConnectionError, connection) => {
+//         if (getConnectionError) {
+//             console.error('Error acquiring connection from the pool:', getConnectionError);
+//             res.status(500).send('Internal Server Error');
+//             return;
+//         }
+
+//         // Insert the vote into the Votes table
+//         const voteQuery = `INSERT INTO Votes (VoterID, WinImageID, LoseImageID) VALUES (?, ?, ?)`;
+//         connection.query(voteQuery, [VoterID, WinImageID, LoseImageID], (voteError, voteResults) => {
+//             if (voteError) {
+//                 connection.release(); // Release the connection back to the pool
+//                 console.error('Error inserting vote into Votes table:', voteError);
+//                 res.status(500).send('Internal Server Error');
+//             } else {
+//                 // Update EloScores in the Images table
+//                 updateEloScores(connection, WinImageID, LoseImageID, () => {
+//                     connection.release(); // Release the connection back to the pool
+//                     res.status(200).send('Vote successfully recorded');
+//                 });
+//             }
+//         });
+//     });
+// });
+
+// function updateEloScores(connection: mysql.PoolConnection, winImageID: any, loseImageID: any, callback: { (): void; (): void; }) {
+//     // Retrieve EloScores for the two images
+//     const getEloQuery = 'SELECT EloScore FROM Images WHERE ImageID IN (?, ?)';
+//     connection.query(getEloQuery, [winImageID, loseImageID], (eloError, eloResults) => {
+//         if (eloError) {
+//             console.error('Error retrieving EloScores:', eloError);
+//             callback();
+//         } else {
+//             const [winElo, loseElo] = eloResults.map((result: { EloScore: any; }) => result.EloScore);
+
+//             // Apply Elo Rating algorithm
+//             const kFactor = 32; // Adjust the k-factor based on your requirements
+//             const expectedWin = 1 / (1 + 10 ** ((loseElo - winElo) / 400));
+//             const expectedLose = 1 - expectedWin;
+
+//             const newWinElo = winElo + kFactor * (1 - expectedWin);
+//             const newLoseElo = loseElo + kFactor * (0 - expectedLose);
+
+//             // Update EloScores in the Images table
+//             const updateEloQuery = 'UPDATE Images SET EloScore = ? WHERE ImageID = ?';
+//             connection.query(updateEloQuery, [newWinElo, winImageID], (updateError) => {
+//                 if (updateError) {
+//                     console.error('Error updating EloScore for the winning image:', updateError);
+//                 }
+
+//                 // Update EloScore for the losing image
+//                 connection.query(updateEloQuery, [newLoseElo, loseImageID], (updateError) => {
+//                     if (updateError) {
+//                         console.error('Error updating EloScore for the losing image:', updateError);
+//                     }
+
+//                     callback();
+//                 });
+//             });
+//         }
+//     });
+// }
+
+const cooldownMap = new Map<number, number>();
 
 app.post('/vote', (req, res) => {
     const { VoterID, WinImageID, LoseImageID } = req.body;
 
-    // Check if cooldown is active for the given ImageID
-    if (cooldownMap.has(WinImageID) && Date.now() - cooldownMap.get(WinImageID) < 5000) {
+    // Check if cooldown is active for either WinImageID or LoseImageID
+    if (
+        (cooldownMap.has(WinImageID) && Date.now() - cooldownMap.get(WinImageID)! < 5000) ||
+        (cooldownMap.has(LoseImageID) && Date.now() - cooldownMap.get(LoseImageID)! < 5000)
+    ) {
         res.status(403).send('Cooldown active. Cannot vote for the same ImageID within 5 seconds.');
         return;
     }
 
-    // Insert the vote into the Votes table
-    const voteQuery = `INSERT INTO Votes (VoterID, WinImageID, LoseImageID) VALUES (?, ?, ?)`;
-    db.query(voteQuery, [VoterID, WinImageID, LoseImageID], (voteError, voteResults) => {
-        if (voteError) {
-            console.error(voteError);
+    // Acquire a connection from the pool
+    db.getConnection((getConnectionError, connection) => {
+        if (getConnectionError) {
+            console.error('Error acquiring connection from the pool:', getConnectionError);
             res.status(500).send('Internal Server Error');
-        } else {
-            // Set the cooldown timestamp for the given ImageID
-            cooldownMap.set(WinImageID, Date.now());
-
-            // Calculate new Elo scores
-            calculateElo(WinImageID, LoseImageID);
-            res.status(200).send('Vote successfully recorded');
+            return;
         }
+
+        // Insert the vote into the Votes table
+        const voteQuery = `INSERT INTO Votes (VoterID, WinImageID, LoseImageID) VALUES (?, ?, ?)`;
+        connection.query(voteQuery, [VoterID, WinImageID, LoseImageID], (voteError, voteResults) => {
+            if (voteError) {
+                connection.release(); // Release the connection back to the pool
+                console.error('Error inserting vote into Votes table:', voteError);
+                res.status(500).send('Internal Server Error');
+            } else {
+                // Update EloScores in the Images table
+                updateEloScores(connection, WinImageID, LoseImageID, () => {
+                    connection.release(); // Release the connection back to the pool
+                    res.status(200).send('Vote successfully recorded');
+
+                    // Set the cooldown timestamp for both WinImageID and LoseImageID
+                    cooldownMap.set(WinImageID, Date.now());
+                    cooldownMap.set(LoseImageID, Date.now());
+                });
+            }
+        });
     });
 });
 
-function calculateElo(winnerImageID: number, loserImageID: number): void {
-    const kFactor = 32; // Adjust the k-factor based on your requirements
+function updateEloScores(connection: mysql.PoolConnection, winImageID: any, loseImageID: any, callback: { (): void; (): void; }) {
+    // Retrieve EloScores for the two images
+    const getEloQuery = 'SELECT EloScore FROM Images WHERE ImageID IN (?, ?)';
+    connection.query(getEloQuery, [winImageID, loseImageID], (eloError, eloResults) => {
+        if (eloError) {
+            console.error('Error retrieving EloScores:', eloError);
+            callback();
+        } else {
+            const [winElo, loseElo] = eloResults.map((result: { EloScore: any; }) => result.EloScore);
 
-    // Retrieve current Elo scores
-    const getScoresQuery = 'SELECT EloScore FROM Images WHERE ImageID IN (?, ?)';
-    db.query(getScoresQuery, [winnerImageID, loserImageID], (error, results: { ImageID: number, EloScore: number }[]) => {
-        if (error) {
-            console.error(error);
-        } else if (results.length === 2) {
-            const winnerElo = results.find((result) => result.ImageID === winnerImageID)?.EloScore || 1500;
-            const loserElo = results.find((result) => result.ImageID === loserImageID)?.EloScore || 1500;
+            // Apply Elo Rating algorithm
+            const kFactor = 32; // Adjust the k-factor based on your requirements
+            const expectedWin = 1 / (1 + 10 ** ((loseElo - winElo) / 400));
+            const expectedLose = 1 - expectedWin;
 
-            // Calculate expected outcomes
-            const expectedWinner = 1 / (1 + 10 ** ((loserElo - winnerElo) / 400));
-            const expectedLoser = 1 / (1 + 10 ** ((winnerElo - loserElo) / 400));
+            const newWinElo = winElo + kFactor * (1 - expectedWin);
+            const newLoseElo = loseElo + kFactor * (0 - expectedLose);
 
-            // Update Elo scores
-            const newWinnerElo = winnerElo + kFactor * (1 - expectedWinner);
-            const newLoserElo = loserElo + kFactor * (0 - expectedLoser);
-
-            // Update Elo scores in the Images table
-            const updateScoresQuery = 'UPDATE Images SET EloScore = ? WHERE ImageID = ?';
-            db.query(updateScoresQuery, [newWinnerElo, winnerImageID], (updateError) => {
+            // Update EloScores in the Images table
+            const updateEloQuery = 'UPDATE Images SET EloScore = ? WHERE ImageID = ?';
+            connection.query(updateEloQuery, [newWinElo, winImageID], (updateError) => {
                 if (updateError) {
-                    console.error(updateError);
+                    console.error('Error updating EloScore for the winning image:', updateError);
                 }
-            });
 
-            db.query(updateScoresQuery, [newLoserElo, loserImageID], (updateError) => {
-                if (updateError) {
-                    console.error(updateError);
-                }
+                // Update EloScore for the losing image
+                connection.query(updateEloQuery, [newLoseElo, loseImageID], (updateError) => {
+                    if (updateError) {
+                        console.error('Error updating EloScore for the losing image:', updateError);
+                    }
+
+                    callback();
+                });
             });
         }
     });
 }
+
+
+
+
 
 
 // function calculateElo(winnerImageID, loserImageID) {
