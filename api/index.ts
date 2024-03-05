@@ -297,8 +297,6 @@ function updateEloScores(connection: mysql.PoolConnection, winImageID: any, lose
 
 
 
-
-
 // function calculateElo(winnerImageID, loserImageID) {
 //     const kFactor = 32; // Adjust the k-factor based on your requirements
 
@@ -342,13 +340,13 @@ function updateEloScores(connection: mysql.PoolConnection, winImageID: any, lose
 
 // Update user information endpoint
 
-app.put('/users/:id', (req, res) => {
+app.put('/updateUserInfo/:id', (req, res) => {
     const userId = parseInt(req.params.id);
-    const { Username, Password, AvatarURL } = req.body;
+    const { Username, Password, AvatarURL, Bio } = req.body;
 
     // Check if the required fields are present
     if (!Username && !Password && !AvatarURL) {
-        return res.status(400).json({ error: 'At least one field (Username, Password, AvatarURL) is required for update' });
+        return res.status(400).json({ error: 'At least one field (Username, Password, AvatarURL , Bio) is required for update' });
     }
 
     // Construct the SQL query to update the user
@@ -368,6 +366,11 @@ app.put('/users/:id', (req, res) => {
     if (AvatarURL) {
         updateQuery += 'AvatarURL=?, ';
         values.push(AvatarURL);
+    }
+
+    if (Bio) {
+        updateQuery += 'Bio=?, ';
+        values.push(Bio);
     }
 
     // Remove the trailing comma and complete the query
@@ -391,7 +394,7 @@ app.put('/users/:id', (req, res) => {
 });
 
 
-app.delete('/users/:id', (req, res) => {
+app.delete('/deleteUser/:id', (req, res) => {
     const userId = parseInt(req.params.id);
 
     // Construct the SQL query to delete the user
