@@ -176,33 +176,74 @@ app.post('/login', (req: Request, res: Response) => {
 //     });
 // });
 
+// app.get('/randomImages', (req: Request, res: Response) => {
+
+//     const subquery = `
+//         SELECT MAX(ImageID) AS ImageID
+//         FROM Images
+//         WHERE EloScore BETWEEN (1500 - 300) AND (1500 + 300)
+//         GROUP BY UserID
+//         ORDER BY RAND()
+//         LIMIT 2
+//     `;
+
+//     const query = `
+//         SELECT i.*
+//         FROM Images i
+//         JOIN (${subquery}) sub ON i.ImageID = sub.ImageID
+//         WHERE i.EloScore BETWEEN (1500 - 300) AND (1500 + 300)
+//     `;
+
+//     db.query(query, (err, results) => {
+//         if (err) {
+//             console.error(err);
+//             return res.status(500).json({ error: 'Internal Server Error' });
+//         }
+
+//         res.json(results);
+//     });
+// });
+
+
 app.get('/randomImages', (req: Request, res: Response) => {
+    const eloRange = 300;
 
-    const subquery = `
-        SELECT MAX(ImageID) AS ImageID
-        FROM Images
-        WHERE EloScore BETWEEN (1500 - 300) AND (1500 + 300)
-        GROUP BY UserID
-        ORDER BY RAND()
-        LIMIT 2
-    `;
-
+    // Query to select random images from two different users within the EloScore range
     const query = `
-        SELECT i.*
-        FROM Images i
-        JOIN (${subquery}) sub ON i.ImageID = sub.ImageID
-        WHERE i.EloScore BETWEEN (1500 - 300) AND (1500 + 300)
+        SELECT *
+        FROM Images
+        WHERE EloScore BETWEEN (1500 - ${eloRange}) AND (1500 + ${eloRange})
+        ORDER BY RAND()
+        LIMIT 4
     `;
 
+    // Execute the query
     db.query(query, (err, results) => {
         if (err) {
             console.error(err);
             return res.status(500).json({ error: 'Internal Server Error' });
         }
 
-        res.json(results);
+        // Ensure that we have at least two different users' images
+        const uniqueUsers = new Set<number>();
+        const selectedImages: any[] = [];
+
+        for (const image of results) {
+            if (!uniqueUsers.has(image.UserID)) {
+                uniqueUsers.add(image.UserID);
+                selectedImages.push(image);
+            }
+
+            if (selectedImages.length >= 2) {
+                break;  // Stop once we have images from two different users
+            }
+        }
+
+        // Send the JSON response with the selected images
+        res.json(selectedImages);
     });
 });
+
 
 
 interface Image {
