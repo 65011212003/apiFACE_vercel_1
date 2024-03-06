@@ -386,7 +386,7 @@ app.put('/updateUserInfo/:id', (req, res) => {
     const { Username, Password, AvatarURL, Bio } = req.body;
 
     // Check if the required fields are present
-    if (!Username && !Password && !AvatarURL) {
+    if (!Username && !Password && !AvatarURL && !Bio) {
         return res.status(400).json({ error: 'At least one field (Username, Password, AvatarURL , Bio) is required for update' });
     }
 
