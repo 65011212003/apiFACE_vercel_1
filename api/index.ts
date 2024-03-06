@@ -381,33 +381,45 @@ function updateEloScores(connection: mysql.PoolConnection, winImageID: any, lose
 
 // Update user information endpoint
 
-app.put('/updateUserInfo/:id', (req, res) => {
+app.put('/updateUserInfo/:id', async (req, res) => {
     const userId = parseInt(req.params.id);
-    const { Username, Password, AvatarURL, Bio } = req.body;
+    const { display_name, Username, Password, Bio } = req.body;
 
     // Check if the required fields are present
-    if (!Username && !Password && !AvatarURL && !Bio) {
-        return res.status(400).json({ error: 'At least one field (Username, Password, AvatarURL , Bio) is required for update' });
+    if (!display_name && !Username && !Password && !Bio) {
+        return res.status(400).json({ error: 'At least one field (Display name , Username, Password, Bio) is required for update' });
+    }
+
+    // Hash the password before storing it
+    let hashedPassword;
+    if (Password) {
+        try {
+            hashedPassword = await bcrypt.hash(Password, 10);
+        } catch (error) {
+            console.error(error);
+            return res.status(500).json({ error: 'Error hashing the password' });
+        }
     }
 
     // Construct the SQL query to update the user
     let updateQuery = 'UPDATE Users SET ';
     const values = [];
 
+    if (display_name) {
+        updateQuery += 'display_name=?, ';
+        values.push(display_name);
+    }
+
     if (Username) {
         updateQuery += 'Username=?, ';
         values.push(Username);
     }
 
-    if (Password) {
+    if (hashedPassword) {
         updateQuery += 'Password=?, ';
-        values.push(Password);
+        values.push(hashedPassword);
     }
 
-    if (AvatarURL) {
-        updateQuery += 'AvatarURL=?, ';
-        values.push(AvatarURL);
-    }
 
     if (Bio) {
         updateQuery += 'Bio=?, ';
@@ -651,9 +663,10 @@ app.delete('/deleteImage/:imageId', async (req: Request, res: Response) => {
 });
 
 
-app.put('/updateImage/:imageId', fileUpload.diskLoader.single('123'), async (req, res) => {
+app.post('/updateImage', fileUpload.diskLoader.single('123'), async (req, res) => {
     try {
-        const imageId = req.params.imageId;
+        const imageId = req.body.imageId;
+        const UserID = req.body.id
 
         // Check if the image exists in the database
         const checkImageQuery = 'SELECT * FROM Images WHERE ImageID = ?';
@@ -686,19 +699,28 @@ app.put('/updateImage/:imageId', fileUpload.diskLoader.single('123'), async (req
             const uploadTask = await uploadBytesResumable(updatedStorageRef, req.file!.buffer, metadata);
             const updatedImageUrl = await getDownloadURL(uploadTask.ref);
 
-            // Update the image URL in the database
-            const updateQuery = 'UPDATE Images SET ImageURL = ? , EloScore = 1500 WHERE ImageID = ?';
-            db.query(updateQuery, [updatedImageUrl, imageId], (updateErr, result) => {
-                if (updateErr) {
-                    console.error(updateErr);
-                    return res.status(500).json({ error: 'Internal Server Error' });
+            const deleteQuery = 'DELETE FROM Images WHERE ImageID = ?';
+            db.query(deleteQuery, [imageId], (deleteErr, deleteResult) => {
+                if (deleteErr) {
+                    console.error(deleteErr);
+                    return res.status(500).json({ error: 'Internal Server Error during deletion' });
                 }
 
-                res.status(200).json({
-                    message: 'Image updated successfully',
-                    file: updatedImageUrl,
+                // Now, insert the new image
+                const insertQuery = 'INSERT INTO Images (ImageURL, EloScore, userID) VALUES (?, 1500, ?)';
+                db.query(insertQuery, [updatedImageUrl, UserID], (insertErr, insertResult) => {
+                    if (insertErr) {
+                        console.error(insertErr);
+                        return res.status(500).json({ error: 'Internal Server Error during insertion' });
+                    }
+
+                    res.status(200).json({
+                        message: 'Image updated successfully',
+                        file: updatedImageUrl,
+                    });
                 });
             });
+
         });
     } catch (error) {
         console.error('Error updating image:', error);
