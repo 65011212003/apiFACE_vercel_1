@@ -336,6 +336,52 @@ function updateEloScores(connection: mysql.PoolConnection, winImageID: any, lose
 }
 
 
+// Endpoint for updating user password
+app.put('/updatePassword/:id', async (req: Request, res: Response) => {
+    const userId = parseInt(req.params.id);
+    const { oldPassword, newPassword } = req.body;
+
+    // Check if the required fields are present
+    if (!oldPassword || !newPassword) {
+        return res.status(400).json({ error: 'Old password and new password are required' });
+    }
+
+    // Fetch the user from the database
+    const getUserQuery = 'SELECT * FROM Users WHERE UserID = ?';
+    db.query(getUserQuery, [userId], async (getUserErr, userResults) => {
+        if (getUserErr) {
+            console.error(getUserErr);
+            return res.status(500).json({ error: 'Internal Server Error' });
+        }
+
+        if (userResults.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        const user = userResults[0];
+
+        // Compare the old password with the hashed password from the database
+        const isOldPasswordValid = await bcrypt.compare(oldPassword, user.Password);
+
+        if (!isOldPasswordValid) {
+            return res.status(401).json({ error: 'Incorrect old password' });
+        }
+
+        // Hash the new password
+        const hashedNewPassword = await bcrypt.hash(newPassword, 10);
+
+        // Update the user's password in the database
+        const updatePasswordQuery = 'UPDATE Users SET Password = ? WHERE UserID = ?';
+        db.query(updatePasswordQuery, [hashedNewPassword, userId], (updateErr, updateResult) => {
+            if (updateErr) {
+                console.error(updateErr);
+                return res.status(500).json({ error: 'Internal Server Error' });
+            }
+
+            res.json({ message: 'Password updated successfully' });
+        });
+    });
+});
 
 
 // function calculateElo(winnerImageID, loserImageID) {
