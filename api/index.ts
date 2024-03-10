@@ -807,6 +807,28 @@ app.post('/uploadAvatar', fileUpload.diskLoader.single('123'), async (req, res) 
 });
 
 
+app.get('/imageStatistics/:imageId', (req: Request, res: Response) => {
+    const imageId = req.params.imageId;
+
+    // Fetch daily statistics for the last 7 days based on ImageID
+    const query = `
+        SELECT *
+        FROM DailyStatistics
+        WHERE image_id = ? AND Date >= CURDATE() - INTERVAL 6 DAY
+        ORDER BY Date DESC
+    `;
+
+    db.query(query, [imageId], (err, results) => {
+        if (err) {
+            console.error(err);
+            return res.status(500).json({ error: 'Internal Server Error' });
+        }
+
+        res.json(results);
+    });
+});
+
+
 
 
 app.listen(3000, () => console.log('Server ready on port 3000.'));
