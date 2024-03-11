@@ -515,27 +515,6 @@ app.delete('/deleteUser/:id', (req, res) => {
 });
 
 
-// app.get('/top-rated', (req, res) => {
-//     // Construct the SQL query to get the top 10 rated users with display names
-//     const topRatedQuery = `
-//         SELECT Images.*, Users.display_name
-//         FROM Images
-//         JOIN Users ON Images.UserID = Users.UserID
-//         ORDER BY Images.EloScore DESC
-//         LIMIT 10
-//     `;
-
-//     // Execute the query
-//     db.query(topRatedQuery, (err, results) => {
-//         if (err) {
-//             console.error(err);
-//             return res.status(500).json({ error: 'Internal Server Error' });
-//         }
-
-//         res.json(results);
-//     });
-// });
-
 
 // app.get('/top-rated', (req, res) => {
 //     // Construct the SQL query to get the top 10 rated images with display names and rank changes
