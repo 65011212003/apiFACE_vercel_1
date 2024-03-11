@@ -581,32 +581,21 @@ app.delete('/deleteUser/:id', (req, res) => {
 app.get('/top-rated', (req, res) => {
     // Construct the SQL query to get the top 10 rated images with display names and rank changes
     const topRatedQuery = `
-        SELECT i.ImageID, i.ImageURL, i.EloScore, u.display_name, 
-            CASE 
-                WHEN (ds.rank - (
-                    SELECT ds2.rank
-                    FROM DailyStatistics ds2
-                    WHERE ds2.image_id = ds.image_id AND ds2.Date = DATE_SUB(ds.Date, INTERVAL 1 DAY)
-                    ORDER BY ds2.Date DESC
-                    LIMIT 1
-                )) > 0 THEN CONCAT('+', ds.rank - (
-                    SELECT ds2.rank
-                    FROM DailyStatistics ds2
-                    WHERE ds2.image_id = ds.image_id AND ds2.Date = DATE_SUB(ds.Date, INTERVAL 1 DAY)
-                    ORDER BY ds2.Date DESC
-                    LIMIT 1
-                ))
-                ELSE CONCAT(ds.rank - (
-                    SELECT ds2.rank
-                    FROM DailyStatistics ds2
-                    WHERE ds2.image_id = ds.image_id AND ds2.Date = DATE_SUB(ds.Date, INTERVAL 1 DAY)
-                    ORDER BY ds2.Date DESC
-                    LIMIT 1
-                ))
+        SELECT i.ImageID, i.ImageURL, i.EloScore, u.display_name,
+            CASE
+                WHEN prev_ds.rank IS NULL THEN 'New'
+                WHEN ds.rank < prev_ds.rank THEN CONCAT('+', prev_ds.rank - ds.rank)
+                WHEN ds.rank > prev_ds.rank THEN CONCAT('-', ds.rank - prev_ds.rank)
+                ELSE '0'
             END AS rank_change
         FROM Images i
         JOIN Users u ON i.UserID = u.UserID
         JOIN DailyStatistics ds ON i.ImageID = ds.image_id AND ds.Date = (SELECT MAX(Date) FROM DailyStatistics WHERE image_id = i.ImageID)
+        LEFT JOIN DailyStatistics prev_ds ON i.ImageID = prev_ds.image_id AND prev_ds.Date = (
+            SELECT MAX(Date) 
+            FROM DailyStatistics 
+            WHERE image_id = i.ImageID AND Date < ds.Date
+        )
         ORDER BY i.EloScore DESC
         LIMIT 10;
     `;
@@ -618,15 +607,10 @@ app.get('/top-rated', (req, res) => {
             return res.status(500).json({ error: 'Internal Server Error' });
         }
 
-        // Format the rank change as '+5' or '-5'
-        const formattedResults = results.map((result: { rank_change: number; }) => ({
-            ...result,
-            rank_change: result.rank_change > 0 ? `+${result.rank_change}` : result.rank_change.toString()
-        }));
-
-        res.json(formattedResults);
+        res.json(results);
     });
 });
+
 
 
 
