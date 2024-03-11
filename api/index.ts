@@ -537,20 +537,52 @@ app.delete('/deleteUser/:id', (req, res) => {
 // });
 
 
+// app.get('/top-rated', (req, res) => {
+//     // Construct the SQL query to get the top 10 rated images with display names and rank changes
+//     const topRatedQuery = `
+//         SELECT i.ImageID, i.ImageURL, i.EloScore, u.display_name, 
+//             (ds.rank - (
+//                 SELECT ds2.rank
+//                 FROM DailyStatistics ds2
+//                 WHERE ds2.image_id = ds.image_id AND ds2.Date = DATE_SUB(ds.Date, INTERVAL 1 DAY)
+//                 ORDER BY ds2.Date DESC
+//                 LIMIT 1
+//             )) AS rank_change
+//         FROM Images i
+//         JOIN Users u ON i.UserID = u.UserID
+//         JOIN DailyStatistics ds ON i.ImageID = ds.image_id AND ds.Date = (SELECT MAX(Date) FROM DailyStatistics WHERE image_id = i.ImageID)
+//         ORDER BY i.EloScore DESC
+//         LIMIT 10;
+//     `;
+
+//     // Execute the query
+//     db.query(topRatedQuery, (err, results) => {
+//         if (err) {
+//             console.error(err);
+//             return res.status(500).json({ error: 'Internal Server Error' });
+//         }
+
+//         res.json(results);
+//     });
+// });
+
+
 app.get('/top-rated', (req, res) => {
     // Construct the SQL query to get the top 10 rated images with display names and rank changes
     const topRatedQuery = `
         SELECT i.ImageID, i.ImageURL, i.EloScore, u.display_name, 
-            (ds.rank - (
-                SELECT ds2.rank
-                FROM DailyStatistics ds2
-                WHERE ds2.image_id = ds.image_id AND ds2.Date = DATE_SUB(ds.Date, INTERVAL 1 DAY)
-                ORDER BY ds2.Date DESC
-                LIMIT 1
-            )) AS rank_change
+            CASE 
+                WHEN ds.rank < prev_ds.rank THEN prev_ds.rank - ds.rank
+                ELSE 0
+            END AS rank_up,
+            CASE 
+                WHEN ds.rank > prev_ds.rank THEN ds.rank - prev_ds.rank
+                ELSE 0
+            END AS rank_down
         FROM Images i
         JOIN Users u ON i.UserID = u.UserID
         JOIN DailyStatistics ds ON i.ImageID = ds.image_id AND ds.Date = (SELECT MAX(Date) FROM DailyStatistics WHERE image_id = i.ImageID)
+        LEFT JOIN DailyStatistics prev_ds ON i.ImageID = prev_ds.image_id AND prev_ds.Date = DATE_SUB(ds.Date, INTERVAL 1 DAY)
         ORDER BY i.EloScore DESC
         LIMIT 10;
     `;
@@ -861,66 +893,70 @@ app.get('/imageStatistics/:imageId', (req: Request, res: Response) => {
 
 
 
-interface QueryResult<T> {
-    rows: T[];
-}
+// interface QueryResult<T> {
+//     rows: T[];
+// }
 
-function executeQuery<T>(query: string, values?: any[]): Promise<QueryResult<T>> {
-    return new Promise<QueryResult<T>>((resolve, reject) => {
-        db.query(query, values, (err, results) => {
-            if (err) {
-                reject(err);
-            } else {
-                resolve({ rows: results });
-            }
-        });
-    });
-}
+// function executeQuery<T>(query: string, values?: any[]): Promise<QueryResult<T>> {
+//     return new Promise<QueryResult<T>>((resolve, reject) => {
+//         db.query(query, values, (err, results) => {
+//             if (err) {
+//                 reject(err);
+//             } else {
+//                 resolve({ rows: results });
+//             }
+//         });
+//     });
+// }
 
 
-app.get('/dailyStats', async (req, res) => {
-    try {
-        const minDate = new Date();
-        minDate.setDate(minDate.getDate() - 7);
+// app.get('/dailyStats/:imageId', async (req, res) => {
+//     try {
+//         const imageId = req.params.imageId;
+//         const minDate = new Date();
+//         minDate.setDate(minDate.getDate() - 7);
 
-        const query = `
-        SELECT DATE(Date) AS date,
-        SUM(CASE WHEN WinImageID = image_id THEN eloScore ELSE 0 END) AS winEloScore,
-        SUM(CASE WHEN LoseImageID = image_id THEN eloScore ELSE 0 END) AS loseEloScore
-        FROM (
-        SELECT
-            Date,
-            image_id,
-            (
-                SELECT COUNT(*) FROM Votes
-                WHERE WinImageID = image_id AND VoteTimestamp >= Date AND VoteTimestamp < DATE_ADD(Date, INTERVAL 1 DAY)
-            ) AS wins,
-            (
-                SELECT COUNT(*) FROM Votes
-                WHERE LoseImageID = image_id AND VoteTimestamp >= Date AND VoteTimestamp < DATE_ADD(Date, INTERVAL 1 DAY)
-            ) AS losses,
-            (
-                SELECT EloScore FROM DailyStatistics
-                WHERE Date = DATE_SUB(Date, INTERVAL 1 DAY) AND image_id = subquery.image_id
-                ORDER BY Date DESC
-                LIMIT 1
-            ) AS eloScore -- Assuming EloScore is the column storing Elo scores
-        FROM DailyStatistics
-        WHERE Date >= ?
-        GROUP BY Date, image_id
-        ) AS subquery
-        GROUP BY date
-        ORDER BY date DESC;
-            `;
+//         const query = `
+//         SELECT DATE(Date) AS date,
+//         SUM(CASE WHEN WinImageID = ? THEN 1 ELSE 0 END) AS wins,
+//         SUM(CASE WHEN LoseImageID = ? THEN 1 ELSE 0 END) AS losses
+//         FROM DailyStatistics
+//         WHERE Date >= ? AND (WinImageID = ? OR LoseImageID = ?)
+//         GROUP BY date
+//         ORDER BY date;
+//         `;
 
-        const { rows } = await executeQuery<{ date: string; wins: number; losses: number }>(query, [minDate]);
+//         const { rows } = await executeQuery<{ date: string; wins: number; losses: number }>(
+//             query,
+//             [imageId, imageId, minDate, imageId, imageId]
+//         );
 
-        res.json(rows);
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-});
+//         const chartData = {
+//             labels: rows.map(row => row.date),
+//             datasets: [
+//                 {
+//                     label: 'Wins',
+//                     data: rows.map(row => row.wins),
+//                     backgroundColor: 'rgba(75, 192, 192, 0.6)',
+//                     borderColor: 'rgba(75, 192, 192, 1)',
+//                     borderWidth: 1,
+//                 },
+//                 {
+//                     label: 'Losses',
+//                     data: rows.map(row => row.losses),
+//                     backgroundColor: 'rgba(255, 99, 132, 0.6)',
+//                     borderColor: 'rgba(255, 99, 132, 1)',
+//                     borderWidth: 1,
+//                 },
+//             ],
+//         };
+
+//         res.json(chartData);
+//     } catch (err) {
+//         console.error(err);
+//         res.status(500).json({ error: 'Internal server error' });
+//     }
+// });
 
 app.listen(3000, () => console.log('Server ready on port 3000.'));
 
