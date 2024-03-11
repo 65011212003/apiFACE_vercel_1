@@ -515,14 +515,44 @@ app.delete('/deleteUser/:id', (req, res) => {
 });
 
 
+// app.get('/top-rated', (req, res) => {
+//     // Construct the SQL query to get the top 10 rated users with display names
+//     const topRatedQuery = `
+//         SELECT Images.*, Users.display_name
+//         FROM Images
+//         JOIN Users ON Images.UserID = Users.UserID
+//         ORDER BY Images.EloScore DESC
+//         LIMIT 10
+//     `;
+
+//     // Execute the query
+//     db.query(topRatedQuery, (err, results) => {
+//         if (err) {
+//             console.error(err);
+//             return res.status(500).json({ error: 'Internal Server Error' });
+//         }
+
+//         res.json(results);
+//     });
+// });
+
+
 app.get('/top-rated', (req, res) => {
-    // Construct the SQL query to get the top 10 rated users with display names
+    // Construct the SQL query to get the top 10 rated images with display names and rank changes
     const topRatedQuery = `
-        SELECT Images.*, Users.display_name
-        FROM Images
-        JOIN Users ON Images.UserID = Users.UserID
-        ORDER BY Images.EloScore DESC
-        LIMIT 10
+        SELECT i.ImageID, i.ImageURL, i.EloScore, u.display_name, 
+            (ds.rank - (
+                SELECT ds2.rank
+                FROM DailyStatistics ds2
+                WHERE ds2.image_id = ds.image_id AND ds2.Date = DATE_SUB(ds.Date, INTERVAL 1 DAY)
+                ORDER BY ds2.Date DESC
+                LIMIT 1
+            )) AS rank_change
+        FROM Images i
+        JOIN Users u ON i.UserID = u.UserID
+        JOIN DailyStatistics ds ON i.ImageID = ds.image_id AND ds.Date = (SELECT MAX(Date) FROM DailyStatistics WHERE image_id = i.ImageID)
+        ORDER BY i.EloScore DESC
+        LIMIT 10;
     `;
 
     // Execute the query
@@ -535,6 +565,7 @@ app.get('/top-rated', (req, res) => {
         res.json(results);
     });
 });
+
 
 
 app.put('/change-image/:userId', async (req: Request, res: Response) => {
@@ -830,6 +861,66 @@ app.get('/imageStatistics/:imageId', (req: Request, res: Response) => {
 
 
 
+interface QueryResult<T> {
+    rows: T[];
+}
+
+function executeQuery<T>(query: string, values?: any[]): Promise<QueryResult<T>> {
+    return new Promise<QueryResult<T>>((resolve, reject) => {
+        db.query(query, values, (err, results) => {
+            if (err) {
+                reject(err);
+            } else {
+                resolve({ rows: results });
+            }
+        });
+    });
+}
+
+
+app.get('/dailyStats', async (req, res) => {
+    try {
+        const minDate = new Date();
+        minDate.setDate(minDate.getDate() - 7);
+
+        const query = `
+        SELECT DATE(Date) AS date,
+        SUM(CASE WHEN WinImageID = image_id THEN eloScore ELSE 0 END) AS winEloScore,
+        SUM(CASE WHEN LoseImageID = image_id THEN eloScore ELSE 0 END) AS loseEloScore
+        FROM (
+        SELECT
+            Date,
+            image_id,
+            (
+                SELECT COUNT(*) FROM Votes
+                WHERE WinImageID = image_id AND VoteTimestamp >= Date AND VoteTimestamp < DATE_ADD(Date, INTERVAL 1 DAY)
+            ) AS wins,
+            (
+                SELECT COUNT(*) FROM Votes
+                WHERE LoseImageID = image_id AND VoteTimestamp >= Date AND VoteTimestamp < DATE_ADD(Date, INTERVAL 1 DAY)
+            ) AS losses,
+            (
+                SELECT EloScore FROM DailyStatistics
+                WHERE Date = DATE_SUB(Date, INTERVAL 1 DAY) AND image_id = subquery.image_id
+                ORDER BY Date DESC
+                LIMIT 1
+            ) AS eloScore -- Assuming EloScore is the column storing Elo scores
+        FROM DailyStatistics
+        WHERE Date >= ?
+        GROUP BY Date, image_id
+        ) AS subquery
+        GROUP BY date
+        ORDER BY date DESC;
+            `;
+
+        const { rows } = await executeQuery<{ date: string; wins: number; losses: number }>(query, [minDate]);
+
+        res.json(rows);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
 
 app.listen(3000, () => console.log('Server ready on port 3000.'));
 
