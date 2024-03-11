@@ -585,17 +585,13 @@ app.get('/top-rated', (req, res) => {
             CASE
                 WHEN prev_ds.rank IS NULL THEN 'New'
                 WHEN ds.rank < prev_ds.rank THEN CONCAT('+', prev_ds.rank - ds.rank)
-                WHEN ds.rank > prev_ds.rank THEN CONCAT('-', ds.rank - prev_ds.rank)
+                WHEN ds.rank > prev_ds.rank THEN CONCAT(ds.rank - prev_ds.rank)
                 ELSE '0'
             END AS rank_change
         FROM Images i
         JOIN Users u ON i.UserID = u.UserID
         JOIN DailyStatistics ds ON i.ImageID = ds.image_id AND ds.Date = (SELECT MAX(Date) FROM DailyStatistics WHERE image_id = i.ImageID)
-        LEFT JOIN DailyStatistics prev_ds ON i.ImageID = prev_ds.image_id AND prev_ds.Date = (
-            SELECT MAX(Date) 
-            FROM DailyStatistics 
-            WHERE image_id = i.ImageID AND Date < ds.Date
-        )
+        LEFT JOIN DailyStatistics prev_ds ON i.ImageID = prev_ds.image_id AND prev_ds.Date = DATE_SUB(ds.Date, INTERVAL 1 DAY)
         ORDER BY i.EloScore DESC
         LIMIT 10;
     `;
