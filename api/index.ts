@@ -546,22 +546,67 @@ app.delete('/deleteUser/:id', (req, res) => {
 // });
 
 
+// app.get('/top-rated', (req, res) => {
+//     // Construct the SQL query to get the top 10 rated images with display names and rank changes
+//     const topRatedQuery = `
+//         SELECT i.ImageID, i.ImageURL, i.EloScore, u.display_name, 
+//             CASE 
+//                 WHEN ds.rank < prev_ds.rank THEN prev_ds.rank - ds.rank
+//                 ELSE 0
+//             END AS rank_up,
+//             CASE 
+//                 WHEN ds.rank > prev_ds.rank THEN ds.rank - prev_ds.rank
+//                 ELSE 0
+//             END AS rank_down
+//         FROM Images i
+//         JOIN Users u ON i.UserID = u.UserID
+//         JOIN DailyStatistics ds ON i.ImageID = ds.image_id AND ds.Date = (SELECT MAX(Date) FROM DailyStatistics WHERE image_id = i.ImageID)
+//         LEFT JOIN DailyStatistics prev_ds ON i.ImageID = prev_ds.image_id AND prev_ds.Date = DATE_SUB(ds.Date, INTERVAL 1 DAY)
+//         ORDER BY i.EloScore DESC
+//         LIMIT 10;
+//     `;
+
+//     // Execute the query
+//     db.query(topRatedQuery, (err, results) => {
+//         if (err) {
+//             console.error(err);
+//             return res.status(500).json({ error: 'Internal Server Error' });
+//         }
+
+//         res.json(results);
+//     });
+// });
+
+
 app.get('/top-rated', (req, res) => {
     // Construct the SQL query to get the top 10 rated images with display names and rank changes
     const topRatedQuery = `
         SELECT i.ImageID, i.ImageURL, i.EloScore, u.display_name, 
             CASE 
-                WHEN ds.rank < prev_ds.rank THEN prev_ds.rank - ds.rank
-                ELSE 0
-            END AS rank_up,
-            CASE 
-                WHEN ds.rank > prev_ds.rank THEN ds.rank - prev_ds.rank
-                ELSE 0
-            END AS rank_down
+                WHEN (ds.rank - (
+                    SELECT ds2.rank
+                    FROM DailyStatistics ds2
+                    WHERE ds2.image_id = ds.image_id AND ds2.Date = DATE_SUB(ds.Date, INTERVAL 1 DAY)
+                    ORDER BY ds2.Date DESC
+                    LIMIT 1
+                )) > 0 THEN CONCAT('+', ds.rank - (
+                    SELECT ds2.rank
+                    FROM DailyStatistics ds2
+                    WHERE ds2.image_id = ds.image_id AND ds2.Date = DATE_SUB(ds.Date, INTERVAL 1 DAY)
+                    ORDER BY ds2.Date DESC
+                    LIMIT 1
+                ))
+                ELSE CONCAT(ds.rank - (
+                    SELECT ds2.rank
+                    FROM DailyStatistics ds2
+                    WHERE ds2.image_id = ds.image_id AND ds2.Date = DATE_SUB(ds.Date, INTERVAL 1 DAY)
+                    ORDER BY ds2.Date DESC
+                    LIMIT 1
+                ))
+            END AS rank_change
         FROM Images i
         JOIN Users u ON i.UserID = u.UserID
         JOIN DailyStatistics ds ON i.ImageID = ds.image_id AND ds.Date = (SELECT MAX(Date) FROM DailyStatistics WHERE image_id = i.ImageID)
-        LEFT JOIN DailyStatistics prev_ds ON i.ImageID = prev_ds.image_id AND prev_ds.Date = DATE_SUB(ds.Date, INTERVAL 1 DAY)
         ORDER BY i.EloScore DESC
         LIMIT 10;
     `;
@@ -573,7 +618,13 @@ app.get('/top-rated', (req, res) => {
             return res.status(500).json({ error: 'Internal Server Error' });
         }
 
-        res.json(results);
+        // Format the rank change as '+5' or '-5'
+        const formattedResults = results.map((result: { rank_change: number; }) => ({
+            ...result,
+            rank_change: result.rank_change > 0 ? `+${result.rank_change}` : result.rank_change.toString()
+        }));
+
+        res.json(formattedResults);
     });
 });
 
@@ -849,93 +900,69 @@ app.post('/uploadAvatar', fileUpload.diskLoader.single('123'), async (req, res) 
 });
 
 
-app.get('/imageStatistics/:imageId', (req: Request, res: Response) => {
+// app.get('/imageStatistics/:imageId', (req: Request, res: Response) => {
+//     const imageId = req.params.imageId;
+
+//     // Fetch daily statistics for the last 7 days based on ImageID
+//     const query = `
+//         SELECT *
+//         FROM DailyStatistics
+//         WHERE image_id = ? AND Date >= CURDATE() - INTERVAL 6 DAY
+//         ORDER BY Date DESC
+//     `;
+
+//     db.query(query, [imageId], (err, results) => {
+//         if (err) {
+//             console.error(err);
+//             return res.status(500).json({ error: 'Internal Server Error' });
+//         }
+
+//         res.json(results);
+//     });
+// });
+
+
+app.get('/image-stats/:imageId', (req, res) => {
     const imageId = req.params.imageId;
 
-    // Fetch daily statistics for the last 7 days based on ImageID
-    const query = `
-        SELECT *
-        FROM DailyStatistics
-        WHERE image_id = ? AND Date >= CURDATE() - INTERVAL 6 DAY
-        ORDER BY Date DESC
+    // Construct the SQL query to get the statistics for the past 7 days of the image
+    const statsQuery = `
+        SELECT DATE(ds.Date) AS date, MAX(ds.EloScore) AS eloScore, MAX(ds.\`rank\`) AS \`rank\`,
+            MAX(CASE 
+                WHEN ds.\`rank\` < prev_ds.\`rank\` THEN prev_ds.\`rank\` - ds.\`rank\`
+                ELSE 0
+            END) AS rank_up,
+            MAX(CASE 
+                WHEN ds.\`rank\` > prev_ds.\`rank\` THEN ds.\`rank\` - prev_ds.\`rank\`
+                ELSE 0
+            END) AS rank_down
+        FROM DailyStatistics ds
+        LEFT JOIN DailyStatistics prev_ds ON ds.image_id = prev_ds.image_id AND prev_ds.Date = DATE_SUB(ds.Date, INTERVAL 1 DAY)
+        WHERE ds.image_id = ?
+            AND ds.Date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+        GROUP BY DATE(ds.Date), ds.Date
+        ORDER BY ds.Date;
     `;
 
-    db.query(query, [imageId], (err, results) => {
+    // Execute the query
+    db.query(statsQuery, [imageId], (err, results) => {
         if (err) {
             console.error(err);
             return res.status(500).json({ error: 'Internal Server Error' });
         }
 
-        res.json(results);
+        // Prepare the data for the graph
+        const graphData = results.map((row: { date: any; eloScore: any; rank: any; rank_up: any; rank_down: any; }) => ({
+            date: row.date,
+            eloScore: row.eloScore,
+            rank: row.rank,
+            rankUp: row.rank_up,
+            rankDown: row.rank_down,
+        }));
+
+        res.json(graphData);
     });
 });
-
-
-
-// interface QueryResult<T> {
-//     rows: T[];
-// }
-
-// function executeQuery<T>(query: string, values?: any[]): Promise<QueryResult<T>> {
-//     return new Promise<QueryResult<T>>((resolve, reject) => {
-//         db.query(query, values, (err, results) => {
-//             if (err) {
-//                 reject(err);
-//             } else {
-//                 resolve({ rows: results });
-//             }
-//         });
-//     });
-// }
-
-
-// app.get('/dailyStats/:imageId', async (req, res) => {
-//     try {
-//         const imageId = req.params.imageId;
-//         const minDate = new Date();
-//         minDate.setDate(minDate.getDate() - 7);
-
-//         const query = `
-//         SELECT DATE(Date) AS date,
-//         SUM(CASE WHEN WinImageID = ? THEN 1 ELSE 0 END) AS wins,
-//         SUM(CASE WHEN LoseImageID = ? THEN 1 ELSE 0 END) AS losses
-//         FROM DailyStatistics
-//         WHERE Date >= ? AND (WinImageID = ? OR LoseImageID = ?)
-//         GROUP BY date
-//         ORDER BY date;
-//         `;
-
-//         const { rows } = await executeQuery<{ date: string; wins: number; losses: number }>(
-//             query,
-//             [imageId, imageId, minDate, imageId, imageId]
-//         );
-
-//         const chartData = {
-//             labels: rows.map(row => row.date),
-//             datasets: [
-//                 {
-//                     label: 'Wins',
-//                     data: rows.map(row => row.wins),
-//                     backgroundColor: 'rgba(75, 192, 192, 0.6)',
-//                     borderColor: 'rgba(75, 192, 192, 1)',
-//                     borderWidth: 1,
-//                 },
-//                 {
-//                     label: 'Losses',
-//                     data: rows.map(row => row.losses),
-//                     backgroundColor: 'rgba(255, 99, 132, 0.6)',
-//                     borderColor: 'rgba(255, 99, 132, 1)',
-//                     borderWidth: 1,
-//                 },
-//             ],
-//         };
-
-//         res.json(chartData);
-//     } catch (err) {
-//         console.error(err);
-//         res.status(500).json({ error: 'Internal server error' });
-//     }
-// });
 
 app.listen(3000, () => console.log('Server ready on port 3000.'));
 
