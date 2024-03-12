@@ -581,7 +581,7 @@ app.delete('/deleteUser/:id', (req, res) => {
 app.get('/top-rated', (req, res) => {
     // Construct the SQL query to get the top 10 rated images with display names and rank changes
     const topRatedQuery = `
-        SELECT i.ImageID, i.ImageURL, i.EloScore, u.display_name,
+        SELECT i.ImageID, i.ImageURL, i.EloScore, u.display_name,prev_ds.rank,
             CASE
                 WHEN prev_ds.rank IS NULL THEN 'New'
                 WHEN ds.rank < prev_ds.rank THEN CONCAT('+', prev_ds.rank - ds.rank)
