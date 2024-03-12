@@ -10,16 +10,16 @@ import { promisify } from 'util';
 
 const app = express();
 
-// app.use(
-//     cors({
-//         origin: "*",
-//     })
-// );
+app.use(
+    cors({
+        origin: "*",
+    })
+);
 
 
-app.use(cors({
-    origin: 'https://face-mash.vercel.app',
-}));
+// app.use(cors({
+//     origin: 'https://face-mash.vercel.app',
+// }));
 
 
 // Create a MySQL connection pool
