@@ -10,18 +10,18 @@ import { promisify } from 'util';
 
 const app = express();
 
-// app.use(
-//     cors({
-//         origin: "*",
-//     })
-// );
+app.use(
+    cors({
+        origin: "*",
+    })
+);
 
 
-app.use(cors({
-    origin: '*',
-    methods: ['GET', 'POST', 'PUT', 'DELETE'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
-}));
+// app.use(cors({
+//     origin: '*',
+//     methods: ['GET', 'POST', 'PUT', 'DELETE'],
+//     allowedHeaders: ['Content-Type', 'Authorization'],
+// }));
 
 // Create a MySQL connection pool
 const db = mysql.createPool({
